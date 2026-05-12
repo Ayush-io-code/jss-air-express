@@ -1,0 +1,49 @@
+# ── Flutter / Dart ────────────────────────────────────────────────────────────
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+*.g.dart
+*.freezed.dart
+
+# ── Android ───────────────────────────────────────────────────────────────────
+android/.gradle/
+android/local.properties
+android/app/google-services.json
+android/key.properties
+*.jks
+*.keystore
+
+# ── iOS ───────────────────────────────────────────────────────────────────────
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/flutter_export_environment.sh
+ios/Flutter/Generated.xcconfig
+
+# ── macOS ─────────────────────────────────────────────────────────────────────
+macos/Pods/
+macos/.symlinks/
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.iml
+*.suo
+*.user
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ── Secrets / sensitive files — NEVER commit these ────────────────────────────
+**/google-services.json
+**/GoogleService-Info.plist
+.env
+.env.*
+secrets.dart
