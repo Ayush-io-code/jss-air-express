@@ -395,11 +395,101 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
     return bill;
   }
 
+  /// Import a bill (with its entries) that came from an Excel file.
+  /// Skips silently if the bill number already exists.
+  Future<bool> importBill({
+    required String partyId,
+    required String billNo,
+    required String billDate,
+    required List<Entry> entries,
+  }) async {
+    if (isDupeBillNo(partyId, billNo)) return false;
+    final bill = Bill(
+      id:        uid(),
+      partyId:   partyId,
+      billNo:    billNo.trim(),
+      billDate:  billDate,
+      createdAt: DateTime.now().millisecondsSinceEpoch,
+      entries:   entries,
+    );
+    _bills.insert(0, bill);
+    notifyListeners();
+    await _save();
+    return true;
+  }
+
   Future<void> deleteBill(String billId) async {
     _deletedBillIds.add(billId);
     _bills.removeWhere((b) => b.id == billId);
     notifyListeners();
     await _save();
+  }
+
+  /// Delete a party and ALL its bills permanently.
+  Future<void> deleteParty(String partyId) async {
+    final partyBillIds = _bills
+        .where((b) => b.partyId == partyId)
+        .map((b) => b.id)
+        .toList();
+    _deletedBillIds.addAll(partyBillIds);
+    _bills.removeWhere((b) => b.partyId == partyId);
+    _parties.removeWhere((p) => p.id == partyId);
+    notifyListeners();
+    await _save();
+  }
+
+  /// Merge [sourceId] into [targetId]: all bills move to target, source deleted.
+  Future<void> mergeParties(String sourceId, String targetId) async {
+    for (final bill in _bills) {
+      if (bill.partyId == sourceId) bill.partyId = targetId;
+    }
+    _parties.removeWhere((p) => p.id == sourceId);
+    notifyListeners();
+    await _save();
+  }
+
+  /// Move a single bill to a different party.
+  Future<void> moveBill(String billId, String newPartyId) async {
+    final idx = _bills.indexWhere((b) => b.id == billId);
+    if (idx == -1) return;
+    _bills[idx].partyId = newPartyId;
+    notifyListeners();
+    await _save();
+  }
+
+  /// Import a full party (by name) with all its bills from a ZIP.
+  /// If a party with that name already exists its id is reused.
+  /// Returns the number of bills actually imported (skipping dupes).
+  Future<int> importPartyWithBills({
+    required String partyName,
+    required List<({String billNo, String billDate, List<Entry> entries})> bills,
+  }) async {
+    String partyId;
+    final existing = _parties.where((p) =>
+        p.name.trim().toLowerCase() == partyName.trim().toLowerCase());
+    if (existing.isNotEmpty) {
+      partyId = existing.first.id;
+    } else {
+      partyId = uid();
+      _parties.add(Party(id: partyId, name: partyName.trim()));
+    }
+
+    int count = 0;
+    for (final b in bills) {
+      if (isDupeBillNo(partyId, b.billNo)) continue;
+      _bills.insert(0, Bill(
+        id:        uid(),
+        partyId:   partyId,
+        billNo:    b.billNo.trim(),
+        billDate:  b.billDate,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        entries:   b.entries,
+      ));
+      count++;
+    }
+    notifyListeners();
+    await _save();
+    return count;
   }
 
   Bill? billById(String billId) {

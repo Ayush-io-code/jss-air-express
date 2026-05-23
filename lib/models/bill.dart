@@ -3,7 +3,7 @@ import 'entry.dart';
 
 class Bill {
   final String id;
-  final String partyId;
+  String partyId;
   String billNo;
   String billDate;
   final int createdAt;

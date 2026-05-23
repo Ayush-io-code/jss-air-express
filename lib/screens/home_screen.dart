@@ -11,6 +11,9 @@ import 'bill_list_screen.dart';
 import 'parties_screen.dart';
 import 'all_bills_screen.dart';
 import 'company_info_screen.dart';
+import 'import_screen.dart';
+import 'zip_import_screen.dart';
+import 'party_manage_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -59,6 +62,27 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         actions: [
           const SyncButton(),
+          IconButton(
+            onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ImportScreen())),
+            icon: const Icon(Icons.upload_file, color: Colors.white),
+            tooltip: 'Import single Excel',
+          ),
+          IconButton(
+            onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ZipImportScreen())),
+            icon: const Icon(Icons.folder_zip, color: Colors.white),
+            tooltip: 'Import ZIP of bills',
+          ),
+          IconButton(
+            onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const PartyManageScreen())),
+            icon: const Icon(Icons.manage_accounts, color: Colors.white),
+            tooltip: 'Manage parties',
+          ),
           TextButton(
             onPressed: () => Navigator.push(
                 context,
