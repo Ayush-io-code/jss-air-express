@@ -97,15 +97,63 @@ class _BillPreviewScreenState extends State<BillPreviewScreen> {
 
   // ── PDF share ───────────────────────────────────────────────────────────────
   Future<void> _sharePdf(String partyName, String billNo) async {
+    final app = context.read<AppProvider>();
+    final bill = app.billById(widget.billId);
+    if (bill == null) return;
+
+    final int entryCount = bill.entries.length;
+
+    // Readability thresholds for compact mode (derived from scale calculation):
+    //   scale = usableH / ((269 + n*11) * 1.10)
+    //   font  = 7 * scale
+    //   <=65 entries → font ≥ 5.5pt  (good)
+    //   <=80 entries → font ≥ 4.5pt  (small but legible)
+    //   >80  entries → font <  4.5pt (too tiny)
+    String? warningText;
+    Color warningColor = const Color(0xFFF57C00); // orange
+    if (entryCount > 80) {
+      warningText =
+          '⚠ This bill has $entryCount entries. Compact mode will be very '
+          'hard to read (font ~${(7 * 817.89 / ((269 + entryCount * 11) * 1.10)).toStringAsFixed(1)}pt). '
+          'Standard is strongly recommended.';
+      warningColor = const Color(0xFFD32F2F); // red
+    } else if (entryCount > 65) {
+      warningText =
+          '⚠ This bill has $entryCount entries. Compact mode will use a small '
+          'font (~${(7 * 817.89 / ((269 + entryCount * 11) * 1.10)).toStringAsFixed(1)}pt). '
+          'Standard may be easier to read.';
+    }
+
     // Ask user: standard multi-page or compact single-page
     final compact = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('PDF Format'),
-        content: const Text(
-          'How would you like to export this bill?\n\n'
-          '• Standard — normal size, may span 2–3 pages if many entries.\n'
-          '• Compact — smaller text & spacing, fits everything on 1 page.',
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'How would you like to export this bill?\n\n'
+              '• Standard — normal size, may span 2–3 pages if many entries.\n'
+              '• Compact — smaller text & spacing, fits everything on 1 page.',
+            ),
+            if (warningText != null) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: warningColor.withOpacity(0.08),
+                  border: Border.all(color: warningColor.withOpacity(0.4)),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  warningText,
+                  style: TextStyle(fontSize: 12.5, color: warningColor),
+                ),
+              ),
+            ],
+          ],
         ),
         actions: [
           TextButton(
@@ -122,9 +170,6 @@ class _BillPreviewScreenState extends State<BillPreviewScreen> {
     if (compact == null) return; // dismissed
     setState(() => _sharing = true);
     try {
-      final app = context.read<AppProvider>();
-      final bill = app.billById(widget.billId);
-      if (bill == null) return;
       final party = app.partyById(bill.partyId);
       final totals = Totals.calc(bill.entries, party);
 
@@ -217,7 +262,8 @@ class _BillPreviewScreenState extends State<BillPreviewScreen> {
       final gap2 = 8 * scale;
 
       return pw.Column(
-        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+        mainAxisSize: pw.MainAxisSize.min,
         children: [
           // ── Company header ──
           pw.Container(
@@ -463,35 +509,276 @@ class _BillPreviewScreenState extends State<BillPreviewScreen> {
       //   Divider+gap:        5pt
       //   Bank/sig block:    ~50pt
       //   Total fixed:      ~280pt
-      const double a4Height       = 841.89;
-      const double pageMargin     = 12.0;
-      final double usableH        = a4Height - pageMargin * 2;
+      // A4 dimensions in points (1 pt = 1/72 inch)
+      const double a4Width    = 595.28;
+      const double a4Height   = 841.89;
+      const double pageMargin = 12.0;
+      final double usableW    = a4Width  - pageMargin * 2;
+      final double usableH    = a4Height - pageMargin * 2;
 
-      const double fixedNaturalH  = 280.0;
-      const double rowNaturalH    = 11.0;
+      // Natural content height at scale=1.0:
+      //   Fixed sections (header+meta+totals+words+bank/sig+gaps) = ~269pt
+      //   Per data row (font7 + pad1.5*2 + border)                = ~11pt
+      //   +10% buffer so scale is always slightly more aggressive
+      //   than the minimum, preventing footer clipping on pw.Page.
+      const double fixedNaturalH = 269.0;
+      const double rowNaturalH   = 11.0;
       final double naturalH =
-          fixedNaturalH + bill.entries.length * rowNaturalH;
+          (fixedNaturalH + bill.entries.length * rowNaturalH) * 1.10;
 
-      // Compute scale: shrink to fit, never enlarge
+      // scale = how much to shrink; clamped so we never upscale
       final double scale = (usableH / naturalH).clamp(0.0, 1.0);
+
+      // Scaled content height — the Column will be exactly this tall
+      final double scaledH = naturalH * scale; // == usableH when scale < 1
 
       doc.addPage(
         pw.Page(
           pageFormat: PdfPageFormat.a4,
           margin: pw.EdgeInsets.all(pageMargin),
-          build: (pw.Context ctx) => pw.Align(
-            alignment: pw.Alignment.topCenter,
-            child: _buildContent(scale),
-          ),
+          build: (pw.Context ctx) =>
+            // Constrain to usable area so pdf layout never clips silently
+            pw.SizedBox(
+              width:  usableW,
+              height: usableH,
+              child: pw.Align(
+                alignment: pw.Alignment.topCenter,
+                child: pw.SizedBox(
+                  width:  usableW,
+                  height: scaledH,
+                  child: _buildContent(scale),
+                ),
+              ),
+            ),
         ),
       );
     } else {
-      // ── Standard: MultiPage at full size ──
+      // ── Standard: MultiPage — header repeats, table rows flow across pages ──
+      // pw.Table inside a Column throws TooManyPagesException when it exceeds
+      // one page. Fix: supply each logical section as a separate top-level
+      // widget so MultiPage can insert page breaks between them.
+      // The entries table uses pw.TableHelper.fromTextArray which is
+      // natively page-break-aware.
+
+      const double s = 1.0; // full scale for standard mode
+
+      final stdHs  = pw.TextStyle(font: ttfBold, fontSize: 16 * s, color: white);
+      final stdSs  = pw.TextStyle(font: ttf,     fontSize: 7  * s, color: subColor);
+      final stdLs  = pw.TextStyle(font: ttfBold, fontSize: 8  * s);
+      final stdVs  = pw.TextStyle(font: ttf,     fontSize: 8  * s);
+      final stdThs = pw.TextStyle(font: ttfBold, fontSize: 7  * s, color: white);
+      final stdCs  = pw.TextStyle(font: ttf,     fontSize: 7  * s);
+      final stdTls = pw.TextStyle(font: ttf,     fontSize: 8  * s, color: grey);
+      final stdTvs = pw.TextStyle(font: ttfBold, fontSize: 8  * s);
+      final stdNs  = pw.TextStyle(font: ttfBold, fontSize: 9  * s, color: navy);
+      final stdBhs = pw.TextStyle(font: ttfBold, fontSize: 8  * s, color: navy);
+      final stdBs  = pw.TextStyle(font: ttf,     fontSize: 7  * s);
+      final stdSig = pw.TextStyle(font: ttfBold, fontSize: 8  * s);
+
+      // Column widths mirror the compact table exactly
+      final colWidths = <int, pw.TableColumnWidth>{
+        0: const pw.FixedColumnWidth(22),
+        1: const pw.FixedColumnWidth(46),
+        2: const pw.FixedColumnWidth(60),
+        3: const pw.FixedColumnWidth(22),
+        4: const pw.FixedColumnWidth(22),
+        5: const pw.FlexColumnWidth(2),
+        6: const pw.FlexColumnWidth(2),
+        7: const pw.FixedColumnWidth(44),
+      };
+
+      pw.Widget stdCell(String v, {pw.TextStyle? style, pw.Alignment? align}) =>
+          pw.Padding(
+            padding: const pw.EdgeInsets.symmetric(horizontal: 3, vertical: 2),
+            child: pw.Align(
+              alignment: align ?? pw.Alignment.centerLeft,
+              child: pw.Text(v, style: style ?? stdCs),
+            ),
+          );
+
+      // Header row (repeated on every page by headerBuilder)
+      pw.TableRow stdHeaderRow() => pw.TableRow(
+            decoration: pw.BoxDecoration(color: navy),
+            children: ['#', 'Date', 'AWB No', 'KG', 'Mode',
+                        'Destination', 'Client Name', 'Amt (Rs.)']
+                .map((h) => stdCell(h, style: stdThs))
+                .toList(),
+          );
+
+      // Data rows
+      final dataRows = bill.entries.asMap().entries.map((ep) {
+        final i = ep.key;
+        final e = ep.value;
+        final bg = i % 2 == 0 ? white : lightRow;
+        final amt = e.price.isEmpty ? '0' : 'Rs.${e.price}';
+        return pw.TableRow(
+          decoration: pw.BoxDecoration(color: bg),
+          children: [
+            '${i + 1}', fmtDate(e.date), e.awb, e.kg,
+            e.mode, e.destination, e.clientName, amt,
+          ].map((v) => stdCell(v)).toList(),
+        );
+      }).toList();
+
       doc.addPage(
         pw.MultiPage(
           pageFormat: PdfPageFormat.a4,
           margin: const pw.EdgeInsets.all(20),
-          build: (pw.Context ctx) => [_buildContent(1.0)],
+          // Header repeated on every page
+          header: (ctx) => pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              // Company banner
+              pw.Container(
+                width: double.infinity,
+                padding: const pw.EdgeInsets.all(7),
+                decoration: pw.BoxDecoration(color: navy),
+                child: pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.center,
+                  children: [
+                    pw.Text(co.name, style: stdHs),
+                    pw.SizedBox(height: 3),
+                    pw.Text(co.address, textAlign: pw.TextAlign.center, style: stdSs),
+                    pw.SizedBox(height: 2),
+                    pw.Text('Phone: ${co.phone} | Email: ${co.email} | GST: ${co.gst}',
+                        textAlign: pw.TextAlign.center, style: stdSs),
+                    ...co.extraFields.map((ef) =>
+                        pw.Text('${ef.label}: ${ef.value}',
+                            textAlign: pw.TextAlign.center, style: stdSs)),
+                  ],
+                ),
+              ),
+              pw.SizedBox(height: 4),
+              // Party / bill meta (first page only via ctx.pageNumber)
+              if (ctx.pageNumber == 1) ...[
+                pw.Row(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Expanded(child: pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        _pdfInfoRow('Party',   partyName,                       stdLs, stdVs),
+                        _pdfInfoRow('Address', address.isEmpty ? '—' : address, stdLs, stdVs),
+                        _pdfInfoRow('GSTIN',   gstin,                           stdLs, stdVs),
+                      ],
+                    )),
+                    pw.SizedBox(width: 20),
+                    pw.Expanded(child: pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        _pdfInfoRow('Bill No', '2026/$billNo',        stdLs, stdVs),
+                        _pdfInfoRow('Date',    fmtDate(bill.billDate), stdLs, stdVs),
+                        _pdfInfoRow('Phone',   phone,                  stdLs, stdVs),
+                      ],
+                    )),
+                  ],
+                ),
+                pw.SizedBox(height: 4),
+              ],
+            ],
+          ),
+          // Footer: page number on every page
+          footer: (ctx) => pw.Align(
+            alignment: pw.Alignment.centerRight,
+            child: pw.Text('Page ${ctx.pageNumber} of ${ctx.pagesCount}',
+                style: pw.TextStyle(font: ttf, fontSize: 7, color: grey)),
+          ),
+          build: (ctx) => [
+            // ── Entries table (page-break-aware) ──
+            pw.Table(
+              border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
+              columnWidths: colWidths,
+              children: [stdHeaderRow(), ...dataRows],
+            ),
+            pw.SizedBox(height: 4),
+
+            // ── Totals ──
+            pw.Align(
+              alignment: pw.Alignment.centerRight,
+              child: pw.SizedBox(
+                width: 210,
+                child: pw.Column(children: [
+                  _pdfTotRow('Gross Total',          _pdfAmt(fmtINRRounded(t.gross)), stdTls, stdTvs),
+                  if (t.fuelPct > 0)
+                    _pdfTotRow('${(t.fuelPct * 100).toStringAsFixed(0)}% Fuel Charges',
+                        _pdfAmt(fmtINRRounded(t.fuel)), stdTls, stdTvs),
+                  _pdfTotRow('Total Value of Supply', _pdfAmt(fmtINRRounded(t.ts)),    stdTls, stdTvs),
+                  if (t.cgstPct > 0)
+                    _pdfTotRow('${(t.cgstPct * 100).toStringAsFixed(0)}% CGST',
+                        _pdfAmt(fmtINRRounded(t.cgst)), stdTls, stdTvs),
+                  if (t.sgstPct > 0)
+                    _pdfTotRow('${(t.sgstPct * 100).toStringAsFixed(0)}% SGST',
+                        _pdfAmt(fmtINRRounded(t.sgst)), stdTls, stdTvs),
+                  pw.Divider(color: navy, thickness: 1.5),
+                  pw.Row(
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                    children: [
+                      pw.Text('NET AMOUNT', style: stdNs),
+                      pw.Text(netRounded,   style: stdNs),
+                    ],
+                  ),
+                ]),
+              ),
+            ),
+            pw.SizedBox(height: 4),
+
+            // ── Amount in words ──
+            pw.Container(
+              width: double.infinity,
+              padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+              decoration: pw.BoxDecoration(
+                color: PdfColor.fromHex('E6F1FB'),
+                border: pw.Border.symmetric(
+                  horizontal: pw.BorderSide(color: PdfColor.fromHex('85B7EB'), width: 0.8),
+                ),
+              ),
+              child: pw.RichText(
+                text: pw.TextSpan(children: [
+                  pw.TextSpan(
+                    text: 'AMOUNT IN WORDS:  ',
+                    style: pw.TextStyle(font: ttfBold, fontSize: 7.5,
+                        color: PdfColor.fromHex('0C447C')),
+                  ),
+                  pw.TextSpan(
+                    text: netWords,
+                    style: pw.TextStyle(font: ttf, fontSize: 7.5,
+                        color: PdfColor.fromHex('185FA5'),
+                        fontStyle: pw.FontStyle.italic),
+                  ),
+                ]),
+              ),
+            ),
+            pw.SizedBox(height: 4),
+            pw.Divider(color: PdfColors.grey300),
+            pw.SizedBox(height: 3),
+
+            // ── Bank details + Signature ──
+            pw.Row(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                pw.Expanded(child: pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Text('BANK DETAILS', style: stdBhs),
+                    pw.SizedBox(height: 2),
+                    pw.Text('Name: ${co.bankName}',     style: stdBs),
+                    pw.Text('A/C No.: ${co.bankAcc}',   style: stdBs),
+                    pw.Text('IFSC: ${co.bankIFSC}',     style: stdBs),
+                    pw.Text('Branch: ${co.bankBranch}', style: stdBs),
+                  ],
+                )),
+                pw.Expanded(child: pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.end,
+                  children: [
+                    pw.SizedBox(height: 16),
+                    pw.Text('for, ${co.name}', style: stdSig),
+                    pw.SizedBox(height: 12),
+                    pw.Text('Authorised Signature', style: stdSig),
+                  ],
+                )),
+              ],
+            ),
+          ],
         ),
       );
     }
