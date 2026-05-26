@@ -12,6 +12,8 @@
 // (AWB) is non-empty are treated as entry rows.
 
 import 'dart:typed_data';
+import 'dart:convert';
+import 'package:archive/archive.dart';
 import 'package:excel/excel.dart';
 import 'package:uuid/uuid.dart';
 import '../models/bill.dart';
@@ -23,7 +25,16 @@ const _uuid = Uuid();
 class ImportedBill {
   final Bill bill;
   final String partyName;
-  ImportedBill({required this.bill, required this.partyName});
+  final String partyAddress;
+  final String partyGstin;
+  final String partyPhone;
+  ImportedBill({
+    required this.bill,
+    required this.partyName,
+    this.partyAddress = '',
+    this.partyGstin = '',
+    this.partyPhone = '',
+  });
 }
 
 class ImportResult {
@@ -32,8 +43,90 @@ class ImportResult {
   const ImportResult({required this.bills, required this.warnings});
 }
 
+/// Decode an Excel workbook, working around the common "custom NumFmtId starts
+/// at 164 but found id of N" crash in the `excel` package.
+///
+/// The error is thrown when a built-in format id (< 164) is listed inside the
+/// custom <numFmt> section of styles.xml. We fix the file in-memory by
+/// removing those offending <numFmt> nodes and retrying.
+Excel _decodeExcelSafe(Uint8List bytes) {
+  try {
+    return Excel.decodeBytes(bytes);
+  } catch (e) {
+    final msg = e.toString();
+    if (!msg.contains('NumFmt')) rethrow;
+  }
+
+  // ── Repair pass ──────────────────────────────────────────────────────────
+  // The .xlsx is a ZIP. Find styles.xml and strip any <numFmt numFmtId="N">
+  // where N < 164.
+  final archive = ZipDecoder().decodeBytes(bytes);
+  final out = Archive();
+
+  for (final file in archive.files) {
+    if (!file.isFile) {
+      out.addFile(file);
+      continue;
+    }
+
+    final lname = file.name.toLowerCase();
+    if (!lname.endsWith('styles.xml')) {
+      out.addFile(file);
+      continue;
+    }
+
+    // Read as UTF-8 string and patch the XML.
+    final raw = file.content is Uint8List
+        ? file.content as Uint8List
+        : Uint8List.fromList(List<int>.from(file.content as List));
+    var xml = utf8.decode(raw, allowMalformed: true);
+
+    // Remove <numFmt .../> and <numFmt ...>...</numFmt> nodes where numFmtId < 164.
+    xml = xml.replaceAllMapped(
+      RegExp(r'<numFmt\b([^>]*)/>'),
+      (m) {
+        final attrs = m.group(1) ?? '';
+        final idMatch = RegExp(r'numFmtId="(\d+)"').firstMatch(attrs);
+        if (idMatch == null) return m.group(0)!;
+        final id = int.tryParse(idMatch.group(1)!) ?? 999;
+        return id < 164 ? '' : m.group(0)!;
+      },
+    );
+    xml = xml.replaceAllMapped(
+      RegExp(r'<numFmt\b([^>]*)>.*?</numFmt>', dotAll: true),
+      (m) {
+        final attrs = m.group(1) ?? '';
+        final idMatch = RegExp(r'numFmtId="(\d+)"').firstMatch(attrs);
+        if (idMatch == null) return m.group(0)!;
+        final id = int.tryParse(idMatch.group(1)!) ?? 999;
+        return id < 164 ? '' : m.group(0)!;
+      },
+    );
+
+    // After stripping built-in ids, recount the remaining <numFmt> nodes and
+    // update the <numFmts count="N"> attribute so the excel package doesn't
+    // choke on a stale count that no longer matches the actual node count.
+    final remaining = RegExp(r'<numFmt\b').allMatches(xml).length;
+    xml = xml.replaceFirstMapped(
+      RegExp(r'<numFmts\b([^>]*)>'),
+      (m) {
+        final attrs = (m.group(1) ?? '')
+            .replaceAll(RegExp(r'\bcount="[^"]*"'), 'count="$remaining"');
+        return '<numFmts$attrs>';
+      },
+    );
+
+    final patched = utf8.encode(xml);
+    final af = ArchiveFile(file.name, patched.length, patched);
+    out.addFile(af);
+  }
+
+  final fixedBytes = Uint8List.fromList(ZipEncoder().encode(out)!);
+  return Excel.decodeBytes(fixedBytes);
+}
+
 ImportResult parseExcelFile(Uint8List bytes) {
-  final excel = Excel.decodeBytes(bytes);
+  final excel = _decodeExcelSafe(bytes);
   final bills = <ImportedBill>[];
   final warnings = <String>[];
 
@@ -58,6 +151,9 @@ ImportResult parseExcelFile(Uint8List bytes) {
 
 ImportedBill? _parseSheet(String sheetName, Sheet sheet) {
   String partyName = '';
+  String partyAddress = '';
+  String partyGstin = '';
+  String partyPhone = '';
   String billNo = sheetName.trim();
   String billDate = '';
   int headerRowIdx = -1;
@@ -70,6 +166,9 @@ ImportedBill? _parseSheet(String sheetName, Sheet sheet) {
     final secondCell = _str(row.length > 1 ? row[1] : null);
 
     if (firstCell.contains('party')) partyName = secondCell;
+    if (firstCell.contains('address')) partyAddress = secondCell;
+    if (firstCell.contains('gstin') || firstCell.contains('gst')) partyGstin = secondCell;
+    if (firstCell.contains('phone') || firstCell.contains('ph:') || firstCell.contains('mobile')) partyPhone = secondCell;
     if (firstCell.contains('bill no')) billNo = secondCell.replaceAll(RegExp(r'^\d{4}/'), '').trim();
     if (firstCell.contains('bill date')) billDate = _parseDate(secondCell);
 
@@ -129,7 +228,13 @@ ImportedBill? _parseSheet(String sheetName, Sheet sheet) {
     entries:   entries,
   );
 
-  return ImportedBill(bill: bill, partyName: partyName);
+  return ImportedBill(
+    bill: bill,
+    partyName: partyName,
+    partyAddress: partyAddress,
+    partyGstin: partyGstin,
+    partyPhone: partyPhone,
+  );
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

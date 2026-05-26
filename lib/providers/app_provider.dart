@@ -380,7 +380,9 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool isDupeBillNo(String partyId, String billNo, {String? excludeId}) {
     final norm = billNo.trim().toLowerCase();
     return _bills.any((b) =>
-        b.id != excludeId && b.billNo.trim().toLowerCase() == norm);
+        b.partyId == partyId &&
+        b.id != excludeId &&
+        b.billNo.trim().toLowerCase() == norm);
   }
 
   Future<Bill?> createBill(String partyId, String billNo, String billDate) async {
@@ -425,6 +427,25 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
     await _save();
   }
 
+  /// Update the bill number and/or date of an existing bill.
+  /// Returns false if the new billNo already exists for this party (dupe check).
+  Future<bool> updateBillMeta(
+      String billId, String newBillNo, String newBillDate) async {
+    final idx = _bills.indexWhere((b) => b.id == billId);
+    if (idx == -1) return false;
+    final bill = _bills[idx];
+    final trimmed = newBillNo.trim();
+    // Only check for duplicate if the bill number actually changed.
+    if (trimmed.toLowerCase() != bill.billNo.trim().toLowerCase()) {
+      if (isDupeBillNo(bill.partyId, trimmed, excludeId: billId)) return false;
+    }
+    bill.billNo   = trimmed;
+    bill.billDate = newBillDate;
+    notifyListeners();
+    await _save();
+    return true;
+  }
+
   /// Delete a party and ALL its bills permanently.
   Future<void> deleteParty(String partyId) async {
     final partyBillIds = _bills
@@ -463,15 +484,38 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
   Future<int> importPartyWithBills({
     required String partyName,
     required List<({String billNo, String billDate, List<Entry> entries})> bills,
+    String address = '',
+    String gstin = '',
+    String phone = '',
   }) async {
     String partyId;
     final existing = _parties.where((p) =>
         p.name.trim().toLowerCase() == partyName.trim().toLowerCase());
     if (existing.isNotEmpty) {
       partyId = existing.first.id;
+      // Optionally fill in address fields if blank
+      final idx = _parties.indexWhere((p) => p.id == partyId);
+      if (idx != -1) {
+        final p = _parties[idx];
+        if (p.address.isEmpty && address.isNotEmpty) {
+          _parties[idx] = p.copyWith(address: address);
+        }
+        if (p.gstin.isEmpty && gstin.isNotEmpty) {
+          _parties[idx] = _parties[idx].copyWith(gstin: gstin);
+        }
+        if (p.phone.isEmpty && phone.isNotEmpty) {
+          _parties[idx] = _parties[idx].copyWith(phone: phone);
+        }
+      }
     } else {
       partyId = uid();
-      _parties.add(Party(id: partyId, name: partyName.trim()));
+      _parties.add(Party(
+        id: partyId,
+        name: partyName.trim(),
+        address: address,
+        gstin: gstin,
+        phone: phone,
+      ));
     }
 
     int count = 0;

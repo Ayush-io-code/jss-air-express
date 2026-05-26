@@ -30,6 +30,40 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  void _showToolsMenu(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _ToolsSheet(
+        onImportExcel: () {
+          Navigator.pop(context);
+          Navigator.push(context,
+              MaterialPageRoute(builder: (_) => const ImportScreen()));
+        },
+        onImportZip: () {
+          Navigator.pop(context);
+          Navigator.push(context,
+              MaterialPageRoute(builder: (_) => const ZipImportScreen()));
+        },
+        onManageParties: () {
+          Navigator.pop(context);
+          Navigator.push(context,
+              MaterialPageRoute(builder: (_) => const PartyManageScreen()));
+        },
+        onAllBills: () {
+          Navigator.pop(context);
+          Navigator.push(context,
+              MaterialPageRoute(builder: (_) => const AllBillsScreen()));
+        },
+        onParties: () {
+          Navigator.pop(context);
+          Navigator.push(context,
+              MaterialPageRoute(builder: (_) => const PartiesScreen()));
+        },
+      ),
+    );
+  }
+
   void _showDevCard() {
     showModalBottomSheet(
       context: context,
@@ -63,41 +97,9 @@ class _HomeScreenState extends State<HomeScreen> {
         actions: [
           const SyncButton(),
           IconButton(
-            onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const ImportScreen())),
-            icon: const Icon(Icons.upload_file, color: Colors.white),
-            tooltip: 'Import single Excel',
-          ),
-          IconButton(
-            onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const ZipImportScreen())),
-            icon: const Icon(Icons.folder_zip, color: Colors.white),
-            tooltip: 'Import ZIP of bills',
-          ),
-          IconButton(
-            onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const PartyManageScreen())),
-            icon: const Icon(Icons.manage_accounts, color: Colors.white),
-            tooltip: 'Manage parties',
-          ),
-          TextButton(
-            onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const AllBillsScreen())),
-            child: const Text('Bills',
-                style: TextStyle(
-                    color: Colors.white, fontWeight: FontWeight.w600)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const PartiesScreen())),
-            child: const Text('Parties',
-                style: TextStyle(
-                    color: Colors.white, fontWeight: FontWeight.w600)),
+            onPressed: () => _showToolsMenu(context),
+            icon: const Icon(Icons.menu, color: Colors.white),
+            tooltip: 'Tools & Navigation',
           ),
           const SizedBox(width: 4),
         ],
@@ -146,6 +148,164 @@ class _HomeScreenState extends State<HomeScreen> {
           : const Center(
               child: CircularProgressIndicator(color: kNavy),
             ),
+    );
+  }
+}
+
+// ── Tools bottom sheet ────────────────────────────────────────────────────────
+class _ToolsSheet extends StatelessWidget {
+  final VoidCallback onImportExcel;
+  final VoidCallback onImportZip;
+  final VoidCallback onManageParties;
+  final VoidCallback onAllBills;
+  final VoidCallback onParties;
+
+  const _ToolsSheet({
+    required this.onImportExcel,
+    required this.onImportZip,
+    required this.onManageParties,
+    required this.onAllBills,
+    required this.onParties,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.15),
+            blurRadius: 20,
+            offset: const Offset(0, -4),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Handle bar
+          Container(
+            width: 40,
+            height: 4,
+            margin: const EdgeInsets.only(top: 12, bottom: 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFDDDDDD),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
+            child: Row(
+              children: [
+                const Text('Navigation & Tools',
+                    style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 15,
+                        color: kNavy)),
+              ],
+            ),
+          ),
+          const Divider(height: 16),
+          // Navigate section
+          _ToolsTile(
+            icon: Icons.receipt_long,
+            label: 'All Bills',
+            subtitle: 'View bills across all parties',
+            color: const Color(0xFF0D47A1),
+            onTap: onAllBills,
+          ),
+          _ToolsTile(
+            icon: Icons.people,
+            label: 'Parties',
+            subtitle: 'Browse & search parties',
+            color: const Color(0xFF1B5E20),
+            onTap: onParties,
+          ),
+          _ToolsTile(
+            icon: Icons.manage_accounts,
+            label: 'Manage Parties',
+            subtitle: 'Edit, delete party records',
+            color: const Color(0xFF4A148C),
+            onTap: onManageParties,
+          ),
+          const Divider(height: 16),
+          _ToolsTile(
+            icon: Icons.upload_file,
+            label: 'Import Excel',
+            subtitle: 'Import a single .xlsx bill file',
+            color: const Color(0xFF1565C0),
+            onTap: onImportExcel,
+          ),
+          _ToolsTile(
+            icon: Icons.folder_zip,
+            label: 'Import ZIP',
+            subtitle: 'Import multiple bills from a .zip',
+            color: const Color(0xFF6A1B9A),
+            onTap: onImportZip,
+          ),
+          const SizedBox(height: 12),
+        ],
+      ),
+    );
+  }
+}
+
+class _ToolsTile extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String subtitle;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _ToolsTile({
+    required this.icon,
+    required this.label,
+    required this.subtitle,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+        child: Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(icon, color: color, size: 22),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label,
+                      style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14,
+                          color: color)),
+                  Text(subtitle,
+                      style: const TextStyle(
+                          fontSize: 12, color: Color(0xFF9CA3AF))),
+                ],
+              ),
+            ),
+            Icon(Icons.arrow_forward_ios,
+                size: 13, color: Colors.grey.shade400),
+          ],
+        ),
+      ),
     );
   }
 }

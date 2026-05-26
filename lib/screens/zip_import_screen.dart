@@ -28,11 +28,17 @@ class _ParsedParty {
   final String detectedName;   // from filename
   final TextEditingController nameCtrl;
   final List<ImportedBill> bills;
+  final String address;
+  final String gstin;
+  final String phone;
   bool include;
 
   _ParsedParty({
     required this.detectedName,
     required this.bills,
+    this.address = '',
+    this.gstin = '',
+    this.phone = '',
   })  : nameCtrl = TextEditingController(text: detectedName),
         include = true;
 
@@ -89,11 +95,26 @@ class _ZipImportScreenState extends State<ZipImportScreen> {
         if (partyName.isEmpty) continue;
 
         try {
-          final xlsxBytes = Uint8List.fromList(file.content as List<int>);
+          // file.content can be Uint8List or List<int> depending on archive version
+          final raw = file.content;
+          final Uint8List xlsxBytes;
+          if (raw is Uint8List) {
+            xlsxBytes = raw;
+          } else {
+            xlsxBytes = Uint8List.fromList(List<int>.from(raw));
+          }
           final result = parseExcelFile(xlsxBytes);
           warnings.addAll(result.warnings.map((w) => '[$partyName] $w'));
           if (result.bills.isNotEmpty) {
-            parsed.add(_ParsedParty(detectedName: partyName, bills: result.bills));
+            // Use address/contact from first bill's Excel metadata if available
+            final firstBill = result.bills.first;
+            parsed.add(_ParsedParty(
+              detectedName: partyName,
+              bills: result.bills,
+              address: firstBill.partyAddress,
+              gstin: firstBill.partyGstin,
+              phone: firstBill.partyPhone,
+            ));
           } else {
             warnings.add('[$partyName] No bills found in this file, skipped.');
           }
@@ -138,6 +159,9 @@ class _ZipImportScreenState extends State<ZipImportScreen> {
       final imported = await app.importPartyWithBills(
         partyName: partyName,
         bills: billList,
+        address: party.address,
+        gstin: party.gstin,
+        phone: party.phone,
       );
       totalImported += imported;
       totalSkipped  += billList.length - imported;

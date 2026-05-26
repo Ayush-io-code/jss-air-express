@@ -32,8 +32,94 @@ class _BillPreviewScreenState extends State<BillPreviewScreen> {
   bool _sharing = false;
   bool _downloading = false;
 
+  // ── Edit bill number / date ─────────────────────────────────────────────────
+  Future<void> _editBillMeta(Bill bill) async {
+    final noCtrl   = TextEditingController(text: bill.billNo);
+    final dateCtrl = TextEditingController(text: bill.billDate);
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Edit Bill'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: noCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Bill Number',
+                hintText: 'e.g. 25',
+                border: OutlineInputBorder(),
+              ),
+              keyboardType: TextInputType.text,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: dateCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Bill Date (YYYY-MM-DD)',
+                hintText: 'e.g. 2026-05-26',
+                border: OutlineInputBorder(),
+              ),
+              keyboardType: TextInputType.datetime,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    final newNo   = noCtrl.text.trim();
+    final newDate = dateCtrl.text.trim();
+    if (newNo.isEmpty) return;
+
+    final app = context.read<AppProvider>();
+    final ok  = await app.updateBillMeta(bill.id, newNo, newDate);
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Bill number already exists for this party.'),
+        ),
+      );
+    }
+  }
+
   // ── PDF share ───────────────────────────────────────────────────────────────
   Future<void> _sharePdf(String partyName, String billNo) async {
+    // Ask user: standard multi-page or compact single-page
+    final compact = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('PDF Format'),
+        content: const Text(
+          'How would you like to export this bill?\n\n'
+          '• Standard — normal size, may span 2–3 pages if many entries.\n'
+          '• Compact — smaller text & spacing, fits everything on 1 page.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Standard'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Compact (1 page)'),
+          ),
+        ],
+      ),
+    );
+    if (compact == null) return; // dismissed
     setState(() => _sharing = true);
     try {
       final app = context.read<AppProvider>();
@@ -42,7 +128,9 @@ class _BillPreviewScreenState extends State<BillPreviewScreen> {
       final party = app.partyById(bill.partyId);
       final totals = Totals.calc(bill.entries, party);
 
-      final pdfBytes = await _buildPdfBytes(bill, partyName, billNo, totals, party, app.company);
+      final pdfBytes = await _buildPdfBytes(
+          bill, partyName, billNo, totals, party, app.company,
+          compact: compact);
 
       final dir = await getTemporaryDirectory();
       final safeName = partyName.replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '_');
@@ -67,7 +155,8 @@ class _BillPreviewScreenState extends State<BillPreviewScreen> {
   /// Builds a PDF using the `pdf` package with a bundled TTF font so that
   /// the ₹ (Rupee) symbol renders correctly on all devices.
   Future<List<int>> _buildPdfBytes(
-      bill, String partyName, String billNo, Totals t, party, CompanyInfo co) async {
+      bill, String partyName, String billNo, Totals t, party, CompanyInfo co,
+      {bool compact = false}) async {
     final doc = pw.Document();
 
     // ── Load bundled fonts (supports ₹ glyph) ──
@@ -82,20 +171,23 @@ class _BillPreviewScreenState extends State<BillPreviewScreen> {
     final lightRow = PdfColor.fromHex('#F5F8FC');
     final subColor = PdfColor.fromHex('#BDD5EC');
 
-    final headerStyle   = pw.TextStyle(font: ttfBold,    fontSize: 16, color: white);
-    final subStyle      = pw.TextStyle(font: ttf,        fontSize: 7,  color: subColor);
-    final labelStyle    = pw.TextStyle(font: ttfBold,    fontSize: 8);
-    final valueStyle    = pw.TextStyle(font: ttf,        fontSize: 8);
-    final tableHdrStyle = pw.TextStyle(font: ttfBold,    fontSize: 7,  color: white);
-    final cellStyle     = pw.TextStyle(font: ttf,        fontSize: 7);
-    final totLabelStyle = pw.TextStyle(font: ttf,        fontSize: 8,  color: grey);
-    final totValueStyle = pw.TextStyle(font: ttfBold,    fontSize: 8);
-    final netStyle      = pw.TextStyle(font: ttfBold,    fontSize: 9,  color: navy);
-    final wordsStyle    = pw.TextStyle(font: ttf,        fontSize: 7,  color: navy,
+    // Scale factor for compact mode
+    final s = compact ? 0.78 : 1.0;
+
+    final headerStyle   = pw.TextStyle(font: ttfBold,    fontSize: 16 * s, color: white);
+    final subStyle      = pw.TextStyle(font: ttf,        fontSize: 7  * s, color: subColor);
+    final labelStyle    = pw.TextStyle(font: ttfBold,    fontSize: 8  * s);
+    final valueStyle    = pw.TextStyle(font: ttf,        fontSize: 8  * s);
+    final tableHdrStyle = pw.TextStyle(font: ttfBold,    fontSize: 7  * s, color: white);
+    final cellStyle     = pw.TextStyle(font: ttf,        fontSize: 7  * s);
+    final totLabelStyle = pw.TextStyle(font: ttf,        fontSize: 8  * s, color: grey);
+    final totValueStyle = pw.TextStyle(font: ttfBold,    fontSize: 8  * s);
+    final netStyle      = pw.TextStyle(font: ttfBold,    fontSize: 9  * s, color: navy);
+    final wordsStyle    = pw.TextStyle(font: ttf,        fontSize: 7  * s, color: navy,
                               fontStyle: pw.FontStyle.italic);
-    final bankHdrStyle  = pw.TextStyle(font: ttfBold,    fontSize: 8,  color: navy);
-    final bankStyle     = pw.TextStyle(font: ttf,        fontSize: 7);
-    final sigStyle      = pw.TextStyle(font: ttfBold,    fontSize: 8);
+    final bankHdrStyle  = pw.TextStyle(font: ttfBold,    fontSize: 8  * s, color: navy);
+    final bankStyle     = pw.TextStyle(font: ttf,        fontSize: 7  * s);
+    final sigStyle      = pw.TextStyle(font: ttfBold,    fontSize: 8  * s);
 
     final address  = party?.address  ?? '—';
     final gstin    = (party?.gstin  ?? '').isEmpty  ? '—' : party!.gstin;
@@ -105,246 +197,304 @@ class _BillPreviewScreenState extends State<BillPreviewScreen> {
     final netRounded   = _pdfAmt(fmtINRRounded(t.net));
     final netWords     = amountInWords(t.net);
 
-    doc.addPage(
-      pw.Page(
-        pageFormat: PdfPageFormat.a4,
-        margin: const pw.EdgeInsets.all(20),
-        build: (pw.Context ctx) {
-          return pw.Column(
+    // ── Helper that builds the full bill content as a single Column ──
+    pw.Widget _buildContent(double scale) {
+      // Re-derive scaled styles from the passed scale value
+      final hs   = pw.TextStyle(font: ttfBold, fontSize: 16 * scale, color: white);
+      final ss   = pw.TextStyle(font: ttf,     fontSize: 7  * scale, color: subColor);
+      final ls   = pw.TextStyle(font: ttfBold, fontSize: 8  * scale);
+      final vs   = pw.TextStyle(font: ttf,     fontSize: 8  * scale);
+      final ths  = pw.TextStyle(font: ttfBold, fontSize: 7  * scale, color: white);
+      final cs   = pw.TextStyle(font: ttf,     fontSize: 7  * scale);
+      final tls  = pw.TextStyle(font: ttf,     fontSize: 8  * scale, color: grey);
+      final tvs  = pw.TextStyle(font: ttfBold, fontSize: 8  * scale);
+      final ns   = pw.TextStyle(font: ttfBold, fontSize: 9  * scale, color: navy);
+      final bhs  = pw.TextStyle(font: ttfBold, fontSize: 8  * scale, color: navy);
+      final bs   = pw.TextStyle(font: ttf,     fontSize: 7  * scale);
+      final sigs = pw.TextStyle(font: ttfBold, fontSize: 8  * scale);
+
+      final gap1 = 4 * scale;
+      final gap2 = 8 * scale;
+
+      return pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          // ── Company header ──
+          pw.Container(
+            width: double.infinity,
+            padding: pw.EdgeInsets.all(7 * scale),
+            decoration: pw.BoxDecoration(color: navy),
+            child: pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.center,
+              children: [
+                pw.Text(co.name, style: hs),
+                pw.SizedBox(height: 3 * scale),
+                pw.Text(co.address, textAlign: pw.TextAlign.center, style: ss),
+                pw.SizedBox(height: 2 * scale),
+                pw.Text(
+                    'Phone: ${co.phone} | Email: ${co.email} | GST: ${co.gst}',
+                    textAlign: pw.TextAlign.center,
+                    style: ss),
+                ...co.extraFields.map((ef) => pw.Text(
+                      '${ef.label}: ${ef.value}',
+                      textAlign: pw.TextAlign.center,
+                      style: ss,
+                    )),
+              ],
+            ),
+          ),
+          pw.SizedBox(height: gap1),
+
+          // ── Party & Bill info ──
+          pw.Row(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
-              // ── Company header ──
-              pw.Container(
-                width: double.infinity,
-                padding: const pw.EdgeInsets.all(12),
-                decoration: pw.BoxDecoration(color: navy),
+              pw.Expanded(
                 child: pw.Column(
-                  crossAxisAlignment: pw.CrossAxisAlignment.center,
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
                   children: [
-                    pw.Text(co.name, style: headerStyle),
-                    pw.SizedBox(height: 3),
-                    pw.Text(co.address,
-                        textAlign: pw.TextAlign.center, style: subStyle),
-                    pw.SizedBox(height: 2),
-                    pw.Text(
-                        'Phone: ${co.phone} | Email: ${co.email} | GST: ${co.gst}',
-                        textAlign: pw.TextAlign.center,
-                        style: subStyle),
-                    ...co.extraFields.map((ef) => pw.Text(
-                          '${ef.label}: ${ef.value}',
-                          textAlign: pw.TextAlign.center,
-                          style: subStyle,
-                        )),
+                    _pdfInfoRow('Party',   partyName,                          ls, vs),
+                    _pdfInfoRow('Address', address.isEmpty ? '—' : address,    ls, vs),
+                    _pdfInfoRow('GSTIN',   gstin,                              ls, vs),
                   ],
                 ),
               ),
-              pw.SizedBox(height: 8),
-
-              // ── Party & Bill info ──
-              pw.Row(
-                crossAxisAlignment: pw.CrossAxisAlignment.start,
-                children: [
-                  pw.Expanded(
-                    child: pw.Column(
-                      crossAxisAlignment: pw.CrossAxisAlignment.start,
-                      children: [
-                        _pdfInfoRow('Party',   partyName,              labelStyle, valueStyle),
-                        _pdfInfoRow('Address', address.isEmpty ? '—' : address, labelStyle, valueStyle),
-                        _pdfInfoRow('GSTIN',   gstin,                  labelStyle, valueStyle),
-                      ],
-                    ),
-                  ),
-                  pw.SizedBox(width: 20),
-                  pw.Expanded(
-                    child: pw.Column(
-                      crossAxisAlignment: pw.CrossAxisAlignment.start,
-                      children: [
-                        _pdfInfoRow('Bill No', '2026/$billNo',         labelStyle, valueStyle),
-                        _pdfInfoRow('Date',    fmtDate(bill.billDate), labelStyle, valueStyle),
-                        _pdfInfoRow('Phone',   phone,                  labelStyle, valueStyle),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              pw.SizedBox(height: 8),
-
-              // ── Entries table ──
-              pw.Table(
-                border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
-                columnWidths: {
-                  0: const pw.FixedColumnWidth(22),
-                  1: const pw.FixedColumnWidth(46),
-                  2: const pw.FixedColumnWidth(60),
-                  3: const pw.FixedColumnWidth(22),
-                  4: const pw.FixedColumnWidth(22),
-                  5: const pw.FlexColumnWidth(2),
-                  6: const pw.FlexColumnWidth(2),
-                  7: const pw.FixedColumnWidth(44),
-                },
-                children: [
-                  // Header row
-                  pw.TableRow(
-                    decoration: pw.BoxDecoration(color: navy),
-                    children: [
-                      '#', 'Date', 'AWB No', 'KG', 'Mode',
-                      'Destination', 'Client Name', 'Amt (Rs.)'
-                    ]
-                        .map((h) => pw.Padding(
-                              padding: const pw.EdgeInsets.symmetric(
-                                  horizontal: 3, vertical: 4),
-                              child: pw.Text(h, style: tableHdrStyle),
-                            ))
-                        .toList(),
-                  ),
-                  // Data rows
-                  ...bill.entries.asMap().entries.map((ep) {
-                    final i = ep.key;
-                    final e = ep.value;
-                    final bg = i % 2 == 0 ? white : lightRow;
-                    final amt = e.price.isEmpty
-                        ? '0'
-                        : 'Rs.${e.price}';
-                    return pw.TableRow(
-                      decoration: pw.BoxDecoration(color: bg),
-                      children: [
-                        '${i + 1}',
-                        fmtDate(e.date),
-                        e.awb,
-                        e.kg,
-                        e.mode,
-                        e.destination,
-                        e.clientName,
-                        amt,
-                      ]
-                          .map((v) => pw.Padding(
-                                padding: const pw.EdgeInsets.symmetric(
-                                    horizontal: 3, vertical: 3),
-                                child: pw.Text(v, style: cellStyle),
-                              ))
-                          .toList(),
-                    );
-                  }),
-                ],
-              ),
-              pw.SizedBox(height: 8),
-
-              // ── Totals ──
-              pw.Align(
-                alignment: pw.Alignment.centerRight,
-                child: pw.SizedBox(
-                  width: 210,
-                  child: pw.Column(
-                    children: [
-                      _pdfTotRow('Gross Total',
-                          _pdfAmt(fmtINRRounded(t.gross)), totLabelStyle, totValueStyle),
-                      if (t.fuelPct > 0)
-                        _pdfTotRow(
-                            '${(t.fuelPct * 100).toStringAsFixed(0)}% Fuel Charges',
-                            _pdfAmt(fmtINRRounded(t.fuel)),
-                            totLabelStyle, totValueStyle),
-                      _pdfTotRow('Total Value of Supply',
-                          _pdfAmt(fmtINRRounded(t.ts)), totLabelStyle, totValueStyle),
-                      if (t.cgstPct > 0)
-                        _pdfTotRow(
-                            '${(t.cgstPct * 100).toStringAsFixed(0)}% CGST',
-                            _pdfAmt(fmtINRRounded(t.cgst)),
-                            totLabelStyle, totValueStyle),
-                      if (t.sgstPct > 0)
-                        _pdfTotRow(
-                            '${(t.sgstPct * 100).toStringAsFixed(0)}% SGST',
-                            _pdfAmt(fmtINRRounded(t.sgst)),
-                            totLabelStyle, totValueStyle),
-                      pw.Divider(color: navy, thickness: 1.5),
-                      pw.Row(
-                        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                        children: [
-                          pw.Text('NET AMOUNT', style: netStyle),
-                          pw.Text(netRounded, style: netStyle),
-                        ],
-                      ),
-                    ],
-                  ),
+              pw.SizedBox(width: 20 * scale),
+              pw.Expanded(
+                child: pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    _pdfInfoRow('Bill No', '2026/$billNo',         ls, vs),
+                    _pdfInfoRow('Date',    fmtDate(bill.billDate), ls, vs),
+                    _pdfInfoRow('Phone',   phone,                  ls, vs),
+                  ],
                 ),
-              ),
-              pw.SizedBox(height: 8),
-
-              // ── Amount in words — navy blue full-width band ──
-              pw.Container(
-                width: double.infinity,
-                padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: pw.BoxDecoration(
-                  color: PdfColor.fromHex('E6F1FB'),
-                  border: pw.Border.symmetric(
-                    horizontal: pw.BorderSide(
-                      color: PdfColor.fromHex('85B7EB'),
-                      width: 0.8,
-                    ),
-                  ),
-                ),
-                child: pw.RichText(
-                  text: pw.TextSpan(
-                    children: [
-                      pw.TextSpan(
-                        text: 'AMOUNT IN WORDS:  ',
-                        style: pw.TextStyle(
-                          font: ttfBold,
-                          fontSize: 7.5,
-                          color: PdfColor.fromHex('0C447C'),
-                        ),
-                      ),
-                      pw.TextSpan(
-                        text: netWords,
-                        style: pw.TextStyle(
-                          font: ttf,
-                          fontSize: 7.5,
-                          color: PdfColor.fromHex('185FA5'),
-                          fontStyle: pw.FontStyle.italic,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              pw.SizedBox(height: 8),
-              pw.Divider(color: PdfColors.grey300),
-              pw.SizedBox(height: 6),
-
-              // ── Bank details + Signature ──
-              pw.Row(
-                crossAxisAlignment: pw.CrossAxisAlignment.start,
-                children: [
-                  pw.Expanded(
-                    child: pw.Column(
-                      crossAxisAlignment: pw.CrossAxisAlignment.start,
-                      children: [
-                        pw.Text('BANK DETAILS', style: bankHdrStyle),
-                        pw.SizedBox(height: 4),
-                        pw.Text('Name: ${co.bankName}',    style: bankStyle),
-                        pw.Text('A/C No.: ${co.bankAcc}',  style: bankStyle),
-                        pw.Text('IFSC: ${co.bankIFSC}',    style: bankStyle),
-                        pw.Text('Branch: ${co.bankBranch}',style: bankStyle),
-                      ],
-                    ),
-                  ),
-                  pw.Expanded(
-                    child: pw.Column(
-                      crossAxisAlignment: pw.CrossAxisAlignment.end,
-                      children: [
-                        pw.SizedBox(height: 30),
-                        pw.Text('for, ${co.name}', style: sigStyle),
-                        pw.SizedBox(height: 24),
-                        pw.Text('Authorised Signature', style: sigStyle),
-                      ],
-                    ),
-                  ),
-                ],
               ),
             ],
-          );
-        },
-      ),
-    );
+          ),
+          pw.SizedBox(height: gap1),
+
+          // ── Entries table ──
+          pw.Table(
+            border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
+            columnWidths: {
+              0: const pw.FixedColumnWidth(22),
+              1: const pw.FixedColumnWidth(46),
+              2: const pw.FixedColumnWidth(60),
+              3: const pw.FixedColumnWidth(22),
+              4: const pw.FixedColumnWidth(22),
+              5: const pw.FlexColumnWidth(2),
+              6: const pw.FlexColumnWidth(2),
+              7: const pw.FixedColumnWidth(44),
+            },
+            children: [
+              pw.TableRow(
+                decoration: pw.BoxDecoration(color: navy),
+                children: [
+                  '#', 'Date', 'AWB No', 'KG', 'Mode',
+                  'Destination', 'Client Name', 'Amt (Rs.)'
+                ]
+                    .map((h) => pw.Padding(
+                          padding: pw.EdgeInsets.symmetric(
+                              horizontal: 3 * scale, vertical: 2 * scale),
+                          child: pw.Text(h, style: ths),
+                        ))
+                    .toList(),
+              ),
+              ...bill.entries.asMap().entries.map((ep) {
+                final i = ep.key;
+                final e = ep.value;
+                final bg = i % 2 == 0 ? white : lightRow;
+                final amt = e.price.isEmpty ? '0' : 'Rs.${e.price}';
+                return pw.TableRow(
+                  decoration: pw.BoxDecoration(color: bg),
+                  children: [
+                    '${i + 1}',
+                    fmtDate(e.date),
+                    e.awb,
+                    e.kg,
+                    e.mode,
+                    e.destination,
+                    e.clientName,
+                    amt,
+                  ]
+                      .map((v) => pw.Padding(
+                            padding: pw.EdgeInsets.symmetric(
+                                horizontal: 3 * scale, vertical: 1.5 * scale),
+                            child: pw.Text(v, style: cs),
+                          ))
+                      .toList(),
+                );
+              }),
+            ],
+          ),
+          pw.SizedBox(height: gap1),
+
+          // ── Totals ──
+          pw.Align(
+            alignment: pw.Alignment.centerRight,
+            child: pw.SizedBox(
+              width: 210 * scale,
+              child: pw.Column(
+                children: [
+                  _pdfTotRow('Gross Total',
+                      _pdfAmt(fmtINRRounded(t.gross)), tls, tvs),
+                  if (t.fuelPct > 0)
+                    _pdfTotRow(
+                        '${(t.fuelPct * 100).toStringAsFixed(0)}% Fuel Charges',
+                        _pdfAmt(fmtINRRounded(t.fuel)), tls, tvs),
+                  _pdfTotRow('Total Value of Supply',
+                      _pdfAmt(fmtINRRounded(t.ts)), tls, tvs),
+                  if (t.cgstPct > 0)
+                    _pdfTotRow(
+                        '${(t.cgstPct * 100).toStringAsFixed(0)}% CGST',
+                        _pdfAmt(fmtINRRounded(t.cgst)), tls, tvs),
+                  if (t.sgstPct > 0)
+                    _pdfTotRow(
+                        '${(t.sgstPct * 100).toStringAsFixed(0)}% SGST',
+                        _pdfAmt(fmtINRRounded(t.sgst)), tls, tvs),
+                  pw.Divider(color: navy, thickness: 1.5),
+                  pw.Row(
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                    children: [
+                      pw.Text('NET AMOUNT', style: ns),
+                      pw.Text(netRounded, style: ns),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          pw.SizedBox(height: gap1),
+
+          // ── Amount in words ──
+          pw.Container(
+            width: double.infinity,
+            padding: pw.EdgeInsets.symmetric(horizontal: 10 * scale, vertical: 3 * scale),
+            decoration: pw.BoxDecoration(
+              color: PdfColor.fromHex('E6F1FB'),
+              border: pw.Border.symmetric(
+                horizontal: pw.BorderSide(
+                  color: PdfColor.fromHex('85B7EB'),
+                  width: 0.8,
+                ),
+              ),
+            ),
+            child: pw.RichText(
+              text: pw.TextSpan(
+                children: [
+                  pw.TextSpan(
+                    text: 'AMOUNT IN WORDS:  ',
+                    style: pw.TextStyle(
+                      font: ttfBold,
+                      fontSize: 7.5 * scale,
+                      color: PdfColor.fromHex('0C447C'),
+                    ),
+                  ),
+                  pw.TextSpan(
+                    text: netWords,
+                    style: pw.TextStyle(
+                      font: ttf,
+                      fontSize: 7.5 * scale,
+                      color: PdfColor.fromHex('185FA5'),
+                      fontStyle: pw.FontStyle.italic,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          pw.SizedBox(height: gap1),
+          pw.Divider(color: PdfColors.grey300),
+          pw.SizedBox(height: 3 * scale),
+
+          // ── Bank details + Signature ──
+          pw.Row(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Expanded(
+                child: pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Text('BANK DETAILS', style: bhs),
+                    pw.SizedBox(height: 2 * scale),
+                    pw.Text('Name: ${co.bankName}',     style: bs),
+                    pw.Text('A/C No.: ${co.bankAcc}',   style: bs),
+                    pw.Text('IFSC: ${co.bankIFSC}',     style: bs),
+                    pw.Text('Branch: ${co.bankBranch}', style: bs),
+                  ],
+                ),
+              ),
+              pw.Expanded(
+                child: pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.end,
+                  children: [
+                    pw.SizedBox(height: 16 * scale),
+                    pw.Text('for, ${co.name}', style: sigs),
+                    pw.SizedBox(height: 12 * scale),
+                    pw.Text('Authorised Signature', style: sigs),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      );
+    }
+
+    if (compact) {
+      // ── Compact: guaranteed single page ──
+      // Strategy: directly compute the scale factor so the content fits
+      // within A4 margins. We estimate the natural (scale=1.0) content height,
+      // then scale = usableH / naturalH (clamped to ≤1.0 so we never upscale).
+      //
+      // Natural height breakdown at scale=1.0:
+      //   Header block:      ~62pt  (padding 7*2 + company name 16 + addr 7 + contact 7 + gaps)
+      //   gap1:               4pt
+      //   Party/bill rows:   ~42pt  (3 rows × 14pt each)
+      //   gap1:               4pt
+      //   Table header row:  ~13pt
+      //   Per entry row:     ~11pt  (font 7 + padding 1.5*2 + border)
+      //   gap1:               4pt
+      //   Totals block:      ~70pt  (5 rows × 14pt)
+      //   gap1:               4pt
+      //   Amount-in-words:   ~18pt
+      //   gap1:               4pt
+      //   Divider+gap:        5pt
+      //   Bank/sig block:    ~50pt
+      //   Total fixed:      ~280pt
+      const double a4Height       = 841.89;
+      const double pageMargin     = 12.0;
+      final double usableH        = a4Height - pageMargin * 2;
+
+      const double fixedNaturalH  = 280.0;
+      const double rowNaturalH    = 11.0;
+      final double naturalH =
+          fixedNaturalH + bill.entries.length * rowNaturalH;
+
+      // Compute scale: shrink to fit, never enlarge
+      final double scale = (usableH / naturalH).clamp(0.0, 1.0);
+
+      doc.addPage(
+        pw.Page(
+          pageFormat: PdfPageFormat.a4,
+          margin: pw.EdgeInsets.all(pageMargin),
+          build: (pw.Context ctx) => pw.Align(
+            alignment: pw.Alignment.topCenter,
+            child: _buildContent(scale),
+          ),
+        ),
+      );
+    } else {
+      // ── Standard: MultiPage at full size ──
+      doc.addPage(
+        pw.MultiPage(
+          pageFormat: PdfPageFormat.a4,
+          margin: const pw.EdgeInsets.all(20),
+          build: (pw.Context ctx) => [_buildContent(1.0)],
+        ),
+      );
+    }
 
     return doc.save();
   }
@@ -543,6 +693,11 @@ class _BillPreviewScreenState extends State<BillPreviewScreen> {
       appBar: AppBar(
         title: Text('Bill #${bill.billNo} Preview'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.edit_outlined),
+            tooltip: 'Edit Bill No / Date',
+            onPressed: () => _editBillMeta(bill),
+          ),
           if (_sharing)
             const Padding(
               padding: EdgeInsets.all(16),

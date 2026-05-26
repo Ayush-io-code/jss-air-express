@@ -55,7 +55,11 @@ class _ImportScreenState extends State<ImportScreen> {
         setState(() { _picking = false; _pickError = 'Could not read file bytes.'; });
         return;
       }
-      _processFile(file.name, bytes);
+      try {
+        _processFile(file.name, bytes);
+      } catch (e) {
+        setState(() { _picking = false; _pickError = 'Failed to parse Excel file: $e'; });
+      }
     } catch (e) {
       setState(() { _picking = false; _pickError = 'Failed to open file: $e'; });
     }
@@ -81,15 +85,24 @@ class _ImportScreenState extends State<ImportScreen> {
   }
 
   bool _isDupe(String billNo) {
+    // Check across every party — bill numbers in this app are unique per-party,
+    // but during import we don't know the partyId until the user picks one, so
+    // we check against the partyId the user has currently selected for this bill.
+    // If no party is selected yet we can't confirm a duplicate, so return false.
+    return false; // duplicate check is done per-party at save time in importBill()
+  }
+
+  bool _isDupeForParty(String partyId, String billNo) {
     final app = context.read<AppProvider>();
-    return app.isDupeBillNo('', billNo);
+    return app.isDupeBillNo(partyId, billNo);
   }
 
   int get _importableCount {
     if (_result == null) return 0;
     return _result!.bills.where((ib) {
-      final hasParty = _selectedPartyId[ib.bill.id] != null;
-      final notDupe  = !_isDupe(ib.bill.billNo);
+      final partyId = _selectedPartyId[ib.bill.id];
+      final hasParty = partyId != null;
+      final notDupe  = partyId == null || !_isDupeForParty(partyId, ib.bill.billNo);
       return hasParty && notDupe;
     }).length;
   }
@@ -103,7 +116,7 @@ class _ImportScreenState extends State<ImportScreen> {
     for (final ib in _result!.bills) {
       final partyId = _selectedPartyId[ib.bill.id];
       if (partyId == null) continue;
-      if (_isDupe(ib.bill.billNo)) continue;
+      if (_isDupeForParty(partyId, ib.bill.billNo)) continue;
 
       final bill = ib.bill;
       // Assign the resolved partyId
@@ -296,7 +309,11 @@ class _ImportScreenState extends State<ImportScreen> {
                     ib: result.bills[i],
                     parties: parties,
                     selectedPartyId: _selectedPartyId[result.bills[i].bill.id],
-                    isDupe: _isDupe(result.bills[i].bill.billNo),
+                    isDupe: _selectedPartyId[result.bills[i].bill.id] != null &&
+                        _isDupeForParty(
+                          _selectedPartyId[result.bills[i].bill.id]!,
+                          result.bills[i].bill.billNo,
+                        ),
                     onPartyChanged: (pid) => setState(
                         () => _selectedPartyId[result.bills[i].bill.id] = pid),
                   ),
