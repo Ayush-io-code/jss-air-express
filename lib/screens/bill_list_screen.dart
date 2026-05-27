@@ -23,11 +23,13 @@ class _BillListScreenState extends State<BillListScreen> {
   final _billDateCtrl = TextEditingController();
   String _billDate = todayStr();
   String? _dupeError;
+  late int _fy; // financial year for the new bill
 
   @override
   void initState() {
     super.initState();
     _billDateCtrl.text = fmtDate(todayStr());
+    _fy = currentFY();
   }
 
   @override
@@ -54,6 +56,7 @@ class _BillListScreenState extends State<BillListScreen> {
       setState(() {
         _billDate = picked.toIso8601String().split('T')[0];
         _billDateCtrl.text = fmtDate(_billDate);
+        _fy = fyOfDate(_billDate);
       });
     }
   }
@@ -62,8 +65,9 @@ class _BillListScreenState extends State<BillListScreen> {
     final app = context.read<AppProvider>();
     final billNo = _billNoCtrl.text.trim();
     if (billNo.isEmpty) return;
-    if (app.isDupeBillNo(widget.partyId, billNo)) {
-      setState(() => _dupeError = '⚠️ Bill number already exists (must be unique across all parties)');
+    if (app.isDupeBillNo(widget.partyId, billNo, fy: _fy)) {
+      setState(() => _dupeError =
+          '⚠️ Bill $_fy/$billNo already exists for this year');
       return;
     }
     final bill = await app.createBill(widget.partyId, billNo, _billDate);
@@ -110,6 +114,7 @@ class _BillListScreenState extends State<BillListScreen> {
             billNoCtrl: _billNoCtrl,
             billDateCtrl: _billDateCtrl,
             dupeError: _dupeError,
+            fy: _fy,
             onPickDate: _pickDate,
             onCancel: () => setState(() {
               _showNewBill = false;
@@ -117,6 +122,10 @@ class _BillListScreenState extends State<BillListScreen> {
             }),
             onCreate: _createBill,
             onChanged: (_) => setState(() => _dupeError = null),
+            onFyChanged: (y) => setState(() {
+              _fy = y;
+              _dupeError = null;
+            }),
           ),
           if (focusBills.isEmpty && !_showNewBill)
             const EmptyState(
@@ -140,7 +149,7 @@ class _BillListScreenState extends State<BillListScreen> {
                   onDelete: () async {
                     final ok = await showConfirmDelete(
                       context,
-                      'Delete Bill #${bill.billNo}?',
+                      'Delete Bill ${fyOfDate(bill.billDate)}/${bill.billNo}?',
                       'This will permanently remove all ${bill.entries.length} '
                           'entr${bill.entries.length == 1 ? 'y' : 'ies'} inside it.',
                     );
@@ -162,19 +171,23 @@ class _NewBillCard extends StatelessWidget {
   final TextEditingController billNoCtrl;
   final TextEditingController billDateCtrl;
   final String? dupeError;
+  final int fy;
   final VoidCallback onPickDate;
   final VoidCallback onCancel;
   final VoidCallback onCreate;
   final ValueChanged<String> onChanged;
+  final ValueChanged<int> onFyChanged;
 
   const _NewBillCard({
     required this.billNoCtrl,
     required this.billDateCtrl,
     required this.dupeError,
+    required this.fy,
     required this.onPickDate,
     required this.onCancel,
     required this.onCreate,
     required this.onChanged,
+    required this.onFyChanged,
   });
 
   @override
@@ -202,35 +215,103 @@ class _NewBillCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                TextField(
-                  controller: billNoCtrl,
-                  onChanged: onChanged,
-                  keyboardType: TextInputType.text,
-                  decoration: InputDecoration(
-                    hintText: 'e.g. 101',
-                    filled: true,
-                    fillColor: dupeError != null
-                        ? const Color(0xFFFFFBF2)
-                        : kInputBg,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide(
-                          color: dupeError != null
-                              ? const Color(0xFFD97706)
-                              : kInputBorder,
-                          width: 1.5),
+                // FY prefix badge + number input on one row
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    // FY selector — tap arrows to go forward/back
+                    GestureDetector(
+                      onTap: () async {
+                        final picked = await showDialog<int>(
+                          context: context,
+                          builder: (_) => _FyPickerDialog(currentFy: fy),
+                        );
+                        if (picked != null) onFyChanged(picked);
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 11),
+                        decoration: BoxDecoration(
+                          color: kNavy,
+                          borderRadius: const BorderRadius.only(
+                            topLeft: Radius.circular(8),
+                            bottomLeft: Radius.circular(8),
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            GestureDetector(
+                              onTap: () => onFyChanged(fy - 1),
+                              child: const Icon(Icons.chevron_left,
+                                  color: Colors.white, size: 18),
+                            ),
+                            const SizedBox(width: 2),
+                            Text('$fy',
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 14)),
+                            const SizedBox(width: 2),
+                            GestureDetector(
+                              onTap: () => onFyChanged(fy + 1),
+                              child: const Icon(Icons.chevron_right,
+                                  color: Colors.white, size: 18),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide(
-                          color: dupeError != null
-                              ? const Color(0xFFD97706)
-                              : kInputBorder,
-                          width: 1.5),
+                    Container(
+                      padding: const EdgeInsets.symmetric(vertical: 11),
+                      decoration: BoxDecoration(
+                        color: kNavy.withOpacity(0.7),
+                      ),
+                      child: const Text(' / ',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 14)),
                     ),
-                    contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 11),
-                  ),
+                    Expanded(
+                      child: TextField(
+                        controller: billNoCtrl,
+                        onChanged: onChanged,
+                        keyboardType: TextInputType.text,
+                        decoration: InputDecoration(
+                          hintText: 'e.g. 01',
+                          filled: true,
+                          fillColor: dupeError != null
+                              ? const Color(0xFFFFFBF2)
+                              : kInputBg,
+                          border: OutlineInputBorder(
+                            borderRadius: const BorderRadius.only(
+                              topRight: Radius.circular(8),
+                              bottomRight: Radius.circular(8),
+                            ),
+                            borderSide: BorderSide(
+                                color: dupeError != null
+                                    ? const Color(0xFFD97706)
+                                    : kInputBorder,
+                                width: 1.5),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: const BorderRadius.only(
+                              topRight: Radius.circular(8),
+                              bottomRight: Radius.circular(8),
+                            ),
+                            borderSide: BorderSide(
+                                color: dupeError != null
+                                    ? const Color(0xFFD97706)
+                                    : kInputBorder,
+                                width: 1.5),
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 11),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
                 if (dupeError != null)
                   Padding(
@@ -320,7 +401,7 @@ class _BillCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Bill #${bill.billNo}',
+                    Text('Bill ${fyOfDate(bill.billDate)}/${bill.billNo}',
                         style: const TextStyle(
                             fontWeight: FontWeight.w700,
                             fontSize: 15,
@@ -351,6 +432,110 @@ class _BillCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+// ── FY picker dialog ─────────────────────────────────────────────────────────
+class _FyPickerDialog extends StatefulWidget {
+  final int currentFy;
+  const _FyPickerDialog({required this.currentFy});
+
+  @override
+  State<_FyPickerDialog> createState() => _FyPickerDialogState();
+}
+
+class _FyPickerDialogState extends State<_FyPickerDialog> {
+  late int _selected;
+
+  @override
+  void initState() {
+    super.initState();
+    _selected = widget.currentFy;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Show a window of 5 years: 2 before current FY, current, 2 after
+    final base = currentFY();
+    final years = List.generate(7, (i) => base - 3 + i); // base-3 to base+3
+
+    return AlertDialog(
+      title: const Text('Select Financial Year',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700,
+              color: kNavy)),
+      contentPadding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text('FY ending year (Apr–Mar)',
+              style: TextStyle(fontSize: 12, color: kMeta)),
+          const SizedBox(height: 10),
+          ...years.map((y) {
+            final isSelected = y == _selected;
+            final isCurrent  = y == base;
+            return GestureDetector(
+              onTap: () => setState(() => _selected = y),
+              child: Container(
+                margin: const EdgeInsets.only(bottom: 6),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: isSelected ? kNavy : Colors.transparent,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: isSelected ? kNavy : kInputBorder,
+                    width: 1.5,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Text('FY $y  (${y - 1}–$y)',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: isSelected ? Colors.white : const Color(0xFF1A1A2E),
+                        )),
+                    const Spacer(),
+                    if (isCurrent)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: isSelected
+                              ? Colors.white.withOpacity(0.25)
+                              : kNavy.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text('Current',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              color: isSelected ? Colors.white : kNavy,
+                            )),
+                      ),
+                    if (isSelected && !isCurrent)
+                      Icon(Icons.check, size: 16,
+                          color: isSelected ? Colors.white : kNavy),
+                  ],
+                ),
+              ),
+            );
+          }),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(backgroundColor: kNavy),
+          onPressed: () => Navigator.pop(context, _selected),
+          child: const Text('Select',
+              style: TextStyle(color: Colors.white)),
+        ),
+      ],
     );
   }
 }

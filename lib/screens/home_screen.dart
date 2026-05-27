@@ -446,10 +446,10 @@ class _DeveloperCard extends StatelessWidget {
           _DevLink(
             icon: Icons.code,
             label: 'GitHub',
-            value: 'SlimShady101',
+            value: 'Ayush-io-code',
             color: const Color(0xFF24292E),
             onTap: () => _launchUrl(
-                context, 'https://github.com/SlimShady101'),
+                context, 'https://github.com/Ayush-io-code'),
           ),
           _DevLink(
             icon: Icons.work_outline,
@@ -475,7 +475,7 @@ class _DeveloperCard extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(bottom: 20),
             child: Text(
-              'Built with ❤️ for JSS Air Express',
+              'Built for JSS Air Express',
               style: TextStyle(
                   fontSize: 11,
                   color: Colors.grey.shade400,

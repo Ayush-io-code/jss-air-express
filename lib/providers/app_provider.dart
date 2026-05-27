@@ -35,6 +35,7 @@ import '../models/bill.dart';
 import '../models/entry.dart';
 import '../models/company_info.dart';
 import '../services/drive_sync_service.dart';
+import '../utils/helpers.dart';
 
 const _storageKey   = 'jss-app-v4';
 const _pollInterval = Duration(seconds: 4);
@@ -377,16 +378,19 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
     return list;
   }
 
-  bool isDupeBillNo(String partyId, String billNo, {String? excludeId}) {
+  bool isDupeBillNo(String partyId, String billNo,
+      {String? excludeId, int? fy}) {
     final norm = billNo.trim().toLowerCase();
+    final checkFY = fy ?? currentFY();
     return _bills.any((b) =>
         b.partyId == partyId &&
         b.id != excludeId &&
+        fyOfDate(b.billDate) == checkFY &&
         b.billNo.trim().toLowerCase() == norm);
   }
 
   Future<Bill?> createBill(String partyId, String billNo, String billDate) async {
-    if (isDupeBillNo(partyId, billNo)) return null;
+    if (isDupeBillNo(partyId, billNo, fy: fyOfDate(billDate))) return null;
     final bill = Bill(
       id: uid(), partyId: partyId, billNo: billNo.trim(),
       billDate: billDate, createdAt: DateTime.now().millisecondsSinceEpoch,
@@ -437,7 +441,8 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
     final trimmed = newBillNo.trim();
     // Only check for duplicate if the bill number actually changed.
     if (trimmed.toLowerCase() != bill.billNo.trim().toLowerCase()) {
-      if (isDupeBillNo(bill.partyId, trimmed, excludeId: billId)) return false;
+      if (isDupeBillNo(bill.partyId, trimmed,
+          excludeId: billId, fy: fyOfDate(newBillDate))) return false;
     }
     bill.billNo   = trimmed;
     bill.billDate = newBillDate;
@@ -545,6 +550,7 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
     final idx = _bills.indexWhere((b) => b.id == billId);
     if (idx == -1) return;
     _bills[idx].entries.add(entry);
+    _bills[idx].entries.sort(_entryDateCmp);
     notifyListeners();
     await _save();
   }
@@ -557,6 +563,7 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
     // Stamp updatedAt so other devices know this version is newer
     _bills[idx].entries[eIdx] = updated.copyWith(
         updatedAt: DateTime.now().millisecondsSinceEpoch);
+    _bills[idx].entries.sort(_entryDateCmp);
     notifyListeners();
     await _save();
   }
@@ -568,6 +575,14 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
     _bills[idx].entries.removeWhere((e) => e.id == entryId);
     notifyListeners();
     await _save();
+  }
+
+  // Sort entries ascending by date (empty dates go last)
+  static int _entryDateCmp(Entry a, Entry b) {
+    if (a.date.isEmpty && b.date.isEmpty) return 0;
+    if (a.date.isEmpty) return 1;
+    if (b.date.isEmpty) return -1;
+    return a.date.compareTo(b.date);
   }
 
   bool isDupeAwb(String billId, String awb, {String? excludeEntryId}) {

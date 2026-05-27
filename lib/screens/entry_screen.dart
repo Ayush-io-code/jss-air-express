@@ -33,6 +33,7 @@ class _EntryScreenState extends State<EntryScreen>
   String? _editEntryId;
   String _savedFlash = '';
   String? _awbError;
+  String _entrySearch = '';
 
   // Autocomplete
   List<String> _destSuggestions = [];
@@ -250,6 +251,8 @@ class _EntryScreenState extends State<EntryScreen>
                 ),
                 _EntryListTab(
                   entries: entries,
+                  search: _entrySearch,
+                  onSearchChanged: (v) => setState(() => _entrySearch = v),
                   onEdit: _startEdit,
                   onDelete: (eid) async {
                     final e =
@@ -639,36 +642,115 @@ class _AddEntryTab extends StatelessWidget {
 // ── Entry list tab ────────────────────────────────────────────────────────────
 class _EntryListTab extends StatelessWidget {
   final List<Entry> entries;
+  final String search;
+  final ValueChanged<String> onSearchChanged;
   final ValueChanged<Entry> onEdit;
   final ValueChanged<String> onDelete;
 
   const _EntryListTab({
     required this.entries,
+    required this.search,
+    required this.onSearchChanged,
     required this.onEdit,
     required this.onDelete,
   });
 
   @override
   Widget build(BuildContext context) {
-    if (entries.isEmpty) {
-      return const EmptyState(
-          icon: '📦',
-          text: 'No entries yet',
-          hint: 'Switch to Add Entry tab to add one');
-    }
-    return ListView.separated(
-      padding: const EdgeInsets.all(14),
-      itemCount: entries.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 8),
-      itemBuilder: (ctx, i) {
-        final e = entries[i];
-        return _EntryCard(
-          number: i + 1,
-          entry: e,
-          onEdit: () => onEdit(e),
-          onDelete: () => onDelete(e.id),
-        );
-      },
+    // Sort by date ascending (provider already sorts on save,
+    // but we sort here too to handle legacy unsorted data)
+    final sorted = [...entries]..sort((a, b) {
+        if (a.date.isEmpty && b.date.isEmpty) return 0;
+        if (a.date.isEmpty) return 1;
+        if (b.date.isEmpty) return -1;
+        return a.date.compareTo(b.date);
+      });
+
+    // Filter by search query across AWB, destination, client name
+    final q = search.trim().toLowerCase();
+    final filtered = q.isEmpty
+        ? sorted
+        : sorted.where((e) =>
+            e.awb.toLowerCase().contains(q) ||
+            e.destination.toLowerCase().contains(q) ||
+            e.clientName.toLowerCase().contains(q)).toList();
+
+    return Column(
+      children: [
+        // Search bar
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 10, 14, 4),
+          child: TextField(
+            onChanged: onSearchChanged,
+            decoration: InputDecoration(
+              hintText: 'Search AWB, destination, client…',
+              prefixIcon: const Icon(Icons.search, size: 20, color: kNavy),
+              suffixIcon: search.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear, size: 18, color: kMeta),
+                      onPressed: () => onSearchChanged(''),
+                    )
+                  : null,
+              filled: true,
+              fillColor: kInputBg,
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: kInputBorder, width: 1.5),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: kInputBorder, width: 1.5),
+              ),
+            ),
+          ),
+        ),
+
+        // Entry count / match count
+        if (entries.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 0, 14, 4),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                q.isEmpty
+                    ? '${entries.length} entr${entries.length == 1 ? "y" : "ies"}'
+                    : '${filtered.length} of ${entries.length} matching',
+                style: const TextStyle(fontSize: 12, color: kMeta),
+              ),
+            ),
+          ),
+
+        // List
+        Expanded(
+          child: filtered.isEmpty
+              ? EmptyState(
+                  icon: q.isEmpty ? '📦' : '🔍',
+                  text: q.isEmpty ? 'No entries yet' : 'No matches',
+                  hint: q.isEmpty
+                      ? 'Switch to Add Entry tab to add one'
+                      : 'Try a different search term',
+                )
+              : ListView.separated(
+                  padding: const EdgeInsets.fromLTRB(14, 4, 14, 14),
+                  itemCount: filtered.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 8),
+                  itemBuilder: (ctx, i) {
+                    final e = filtered[i];
+                    // Show original sorted index for row number
+                    final originalIdx = sorted.indexOf(e);
+                    return _EntryCard(
+                      number: originalIdx + 1,
+                      entry: e,
+                      highlight: q,
+                      onEdit: () => onEdit(e),
+                      onDelete: () => onDelete(e.id),
+                    );
+                  },
+                ),
+        ),
+      ],
     );
   }
 }
@@ -676,6 +758,7 @@ class _EntryListTab extends StatelessWidget {
 class _EntryCard extends StatelessWidget {
   final int number;
   final Entry entry;
+  final String highlight;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
 
@@ -684,7 +767,30 @@ class _EntryCard extends StatelessWidget {
     required this.entry,
     required this.onEdit,
     required this.onDelete,
+    this.highlight = '',
   });
+
+  // Highlights the matched substring in yellow bold
+  Widget _hl(String text, TextStyle base) {
+    if (highlight.isEmpty) return Text(text, style: base);
+    final q = highlight.toLowerCase();
+    final lower = text.toLowerCase();
+    final idx = lower.indexOf(q);
+    if (idx == -1) return Text(text, style: base);
+    return RichText(
+      text: TextSpan(style: base, children: [
+        TextSpan(text: text.substring(0, idx)),
+        TextSpan(
+          text: text.substring(idx, idx + q.length),
+          style: base.copyWith(
+            backgroundColor: const Color(0xFFFFE082),
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        TextSpan(text: text.substring(idx + q.length)),
+      ]),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -711,8 +817,8 @@ class _EntryCard extends StatelessWidget {
                       fontWeight: FontWeight.w700)),
               const SizedBox(width: 6),
               Expanded(
-                child: Text(entry.destination,
-                    style: const TextStyle(
+                child: _hl(entry.destination,
+                    const TextStyle(
                         fontWeight: FontWeight.w700, fontSize: 15)),
               ),
               Text(fmtINR(price),
@@ -740,8 +846,11 @@ class _EntryCard extends StatelessWidget {
                 Text(fmtDate(entry.date),
                     style:
                         const TextStyle(color: kMeta, fontSize: 12)),
-              Text('AWB: ${entry.awb}',
-                  style: const TextStyle(color: kMeta, fontSize: 12)),
+              _hl('AWB: ${entry.awb}',
+                  const TextStyle(color: kMeta, fontSize: 12)),
+              if (entry.clientName.isNotEmpty)
+                _hl(entry.clientName,
+                    const TextStyle(color: kMeta, fontSize: 12)),
               if (entry.kg.isNotEmpty)
                 Text('${entry.kg} kg',
                     style:

@@ -83,3 +83,24 @@ String _convertToWords(int n) {
   return '${_convertToWords(n ~/ 10000000)} Crore'
       '${n % 10000000 != 0 ? ' ${_convertToWords(n % 10000000)}' : ''}';
 }
+
+// ── Financial Year helpers ───────────────────────────────────────────────────
+// Indian FY: April 1 → March 31.
+// FY 2025-26 is represented as "2026" (the ending year).
+// e.g. April 2025–March 2026 → FY "2026"
+
+int currentFY() {
+  final now = DateTime.now();
+  return now.month >= 4 ? now.year + 1 : now.year;
+}
+
+// Returns "YYYY" label for a given date string (yyyy-MM-dd).
+int fyOfDate(String dateStr) {
+  if (dateStr.isEmpty) return currentFY();
+  try {
+    final d = DateTime.parse(dateStr);
+    return d.month >= 4 ? d.year + 1 : d.year;
+  } catch (_) {
+    return currentFY();
+  }
+}
